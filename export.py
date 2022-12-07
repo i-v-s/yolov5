@@ -130,7 +130,7 @@ def export_torchscript(model, im, file, optimize, prefix=colorstr('TorchScript:'
 
 
 @try_export
-def export_onnx(model, im, file, opset, dynamic, simplify, prefix=colorstr('ONNX:')):
+def export_onnx(model, im, file, opset, dynamic, dynamic_batch, simplify, prefix=colorstr('ONNX:')):
     # YOLOv5 ONNX export
     check_requirements('onnx')
     import onnx
@@ -146,6 +146,13 @@ def export_onnx(model, im, file, opset, dynamic, simplify, prefix=colorstr('ONNX
             dynamic['output1'] = {0: 'batch', 2: 'mask_height', 3: 'mask_width'}  # shape(1,32,160,160)
         elif isinstance(model, DetectionModel):
             dynamic['output0'] = {0: 'batch', 1: 'anchors'}  # shape(1,25200,85)
+    elif dynamic_batch:
+        dynamic = {'images': {0: 'batch'}}  # shape(1,3,640,640)
+        if isinstance(model, SegmentationModel):
+            dynamic['output0'] = {0: 'batch'}  # shape(1,25200,85)
+            dynamic['output1'] = {0: 'batch'}  # shape(1,32,160,160)
+        elif isinstance(model, DetectionModel):
+            dynamic['output0'] = {0: 'batch'}  # shape(1,25200,85)
 
     torch.onnx.export(
         model.cpu() if dynamic else model,  # --dynamic only compatible with cpu
@@ -501,6 +508,7 @@ def run(
         optimize=False,  # TorchScript: optimize for mobile
         int8=False,  # CoreML/TF INT8 quantization
         dynamic=False,  # ONNX/TF/TensorRT: dynamic axes
+        dynamic_batch=False,  # ONNX/TF/TensorRT: dynamic axes
         simplify=False,  # ONNX: simplify model
         opset=12,  # ONNX: opset version
         verbose=False,  # TensorRT: verbose log
@@ -525,6 +533,7 @@ def run(
     if half:
         assert device.type != 'cpu' or coreml, '--half only compatible with GPU export, i.e. use --device 0'
         assert not dynamic, '--half not compatible with --dynamic, i.e. use either --half or --dynamic but not both'
+    assert not (dynamic and dynamic_batch), '--dynamic not compatible with dynamic_batch'
     model = attempt_load(weights, device=device, inplace=True, fuse=True)  # load FP32 model
 
     # Checks
@@ -561,7 +570,7 @@ def run(
     if engine:  # TensorRT required before ONNX
         f[1], _ = export_engine(model, im, file, half, dynamic, simplify, workspace, verbose)
     if onnx or xml:  # OpenVINO requires ONNX
-        f[2], _ = export_onnx(model, im, file, opset, dynamic, simplify)
+        f[2], _ = export_onnx(model, im, file, opset, dynamic, dynamic_batch, simplify)
     if xml:  # OpenVINO
         f[3], _ = export_openvino(file, metadata, half)
     if coreml:  # CoreML
@@ -623,6 +632,7 @@ def parse_opt():
     parser.add_argument('--optimize', action='store_true', help='TorchScript: optimize for mobile')
     parser.add_argument('--int8', action='store_true', help='CoreML/TF INT8 quantization')
     parser.add_argument('--dynamic', action='store_true', help='ONNX/TF/TensorRT: dynamic axes')
+    parser.add_argument('--dynamic-batch', action='store_true', help='dynamic batch onnx for tensorrt and onnx-runtime')
     parser.add_argument('--simplify', action='store_true', help='ONNX: simplify model')
     parser.add_argument('--opset', type=int, default=12, help='ONNX: opset version')
     parser.add_argument('--verbose', action='store_true', help='TensorRT: verbose log')
